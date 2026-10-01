@@ -8,7 +8,7 @@ The binaries are built by GitHub Actions. You do **not** need to build anything 
 
 ```sh
 git clone https://github.com/CypherTroopers/offlinewalletgenerator.git
-cd coldwalletgenerator
+cd offlinewalletgenerator
 ```
 
 ## 2. Go offline
