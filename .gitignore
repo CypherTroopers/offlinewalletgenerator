@@ -1,0 +1,18 @@
+# Build outputs; this application never writes wallet files automatically.
+/coldwalletgenerator
+/coldwalletgenerator.exe
+/build/
+/dist/
+/vendor/
+*.test
+*.out
+
+# Accidental secret files (not a substitute for reviewing every commit).
+.env
+.env.*
+*.key
+*.pem
+*private*key*.txt
+wallet*.json
+wallet*.txt
+keystore/
