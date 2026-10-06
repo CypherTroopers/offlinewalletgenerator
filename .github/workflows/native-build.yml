@@ -1,0 +1,124 @@
+name: Native build and test
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  packaging-tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Test artifact validation
+        run: python3 -m unittest discover -s scripts -p 'test_*.py' -v
+
+  native:
+    name: Test ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            goos: linux
+            goarch: amd64
+            target: linux-amd64
+          - runner: ubuntu-24.04-arm
+            goos: linux
+            goarch: arm64
+            target: linux-arm64
+          - runner: windows-2022
+            goos: windows
+            goarch: amd64
+            target: windows-amd64
+          - runner: windows-11-arm
+            goos: windows
+            goarch: arm64
+            target: windows-arm64
+          - runner: macos-14
+            goos: darwin
+            goarch: arm64
+            target: darwin-arm64
+          - runner: macos-15-intel
+            goos: darwin
+            goarch: amd64
+            target: darwin-amd64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    env:
+      CGO_ENABLED: "0"
+      GOTOOLCHAIN: local
+      GOSUMDB: sum.golang.org
+      GOWORK: "off"
+      TARGET_OS: ${{ matrix.goos }}
+      TARGET_ARCH: ${{ matrix.goarch }}
+      TARGET: ${{ matrix.target }}
+
+    steps:
+      - name: Check out the exact source commit
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Set up native Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+          architecture: ${{ matrix.goarch == 'amd64' && 'x64' || 'arm64' }}
+          cache: false
+
+      - name: Verify source and native toolchain
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(go env GOHOSTOS)" = "$TARGET_OS"
+          test "$(go env GOHOSTARCH)" = "$TARGET_ARCH"
+          test "$(go env GOOS)" = "$TARGET_OS"
+          test "$(go env GOARCH)" = "$TARGET_ARCH"
+          go version
+          go mod download
+          go mod verify
+          go mod tidy -diff
+          test -z "$(gofmt -l main.go main_test.go)"
+          go vet -mod=readonly ./...
+          go test -mod=readonly -count=1 ./...
+
+      - name: Build and run the exact distribution binary
+        run: |
+          set -euo pipefail
+          mkdir -p staging
+          binary=staging/coldwalletgenerator
+          if [[ "$TARGET_OS" == windows ]]; then binary+=.exe; fi
+          go build -mod=readonly -trimpath -buildvcs=false -o "$binary" .
+          # CI keys are throwaway. Never log or upload wallet output.
+          "$binary" > /dev/null 2>&1
+          if "$binary" unexpected-argument > /dev/null 2>&1; then
+            echo "The binary incorrectly accepted an argument." >&2
+            exit 1
+          fi
+          if [[ "$RUNNER_OS" == macOS ]]; then
+            digest=$(shasum -a 256 "$binary" | awk '{print $1}')
+          else
+            digest=$(sha256sum "$binary" | awk '{print $1}')
+          fi
+          printf '{"source_commit":"%s","target":"%s","go_version":"%s","sha256":"%s"}\n' \
+            "$GITHUB_SHA" "$TARGET" "$(go env GOVERSION)" "$digest" > staging/build-info.json
+          printf 'Native build and execution passed: %s\n' "$TARGET" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload only the tested binary and its metadata
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: native-${{ matrix.target }}
+          path: staging/
+          if-no-files-found: error
+          retention-days: 7
+          overwrite: true
