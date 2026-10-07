@@ -1,4 +1,4 @@
-# Cold Wallet Generator
+# offline Wallet Generator
 
 Generate a random EVM address and private key locally on your own computer.
 
